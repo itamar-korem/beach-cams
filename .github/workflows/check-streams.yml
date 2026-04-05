@@ -2,7 +2,7 @@ name: Check & Heal Streams
 
 on:
   schedule:
-    - cron: '0 6 * * *'  # Every day at 6am UTC (8am Israel time)
+    - cron: '0 1 * * *'  # Every day at 1am UTC (4am Israel time)
   workflow_dispatch:      # Allow manual trigger
 
 jobs:
