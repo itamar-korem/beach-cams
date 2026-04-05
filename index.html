@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Beach Cams</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #111; height: 100vh; display: flex; flex-direction: column; font-family: sans-serif; overflow: hidden; }
+
+    #layout {
+      display: flex;
+      flex: 1;
+      gap: 4px;
+      padding: 4px;
+    }
+
+    /* Stack vertically when only one stream, side by side for two */
+    #layout.single .stream-panel { width: 100%; height: 100%; }
+    #layout.side-by-side { flex-direction: row; }
+    #layout.stacked { flex-direction: column; }
+
+    .stream-panel {
+      flex: 1;
+      position: relative;
+      background: #000;
+      overflow: hidden;
+      border-radius: 6px;
+      cursor: grab;
+    }
+    .stream-panel.grabbing { cursor: grabbing; }
+
+    .video-wrapper {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      transform-origin: center center;
+      transition: transform 0.08s ease;
+    }
+
+    video {
+      width: 100%; height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+
+    .panel-label {
+      position: absolute;
+      top: 10px; left: 12px;
+      color: rgba(255,255,255,0.7);
+      font-size: 13px;
+      pointer-events: none;
+      z-index: 5;
+      transition: opacity 1s;
+    }
+
+    .panel-controls {
+      position: absolute;
+      bottom: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 6px;
+      background: rgba(0,0,0,0.55);
+      padding: 6px 12px;
+      border-radius: 24px;
+      z-index: 10;
+      opacity: 0;
+      transition: opacity 0.2s;
+      white-space: nowrap;
+    }
+    .stream-panel:hover .panel-controls { opacity: 1; }
+
+    .panel-controls button {
+      background: rgba(255,255,255,0.15);
+      color: #fff;
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 16px;
+      padding: 4px 12px;
+      font-size: 15px;
+      cursor: pointer;
+    }
+    .panel-controls button:hover { background: rgba(255,255,255,0.3); }
+    .zoom-label {
+      color: #fff;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      min-width: 42px;
+      justify-content: center;
+    }
+
+    /* Top toolbar */
+    #toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      background: #1a1a1a;
+      border-bottom: 1px solid #333;
+    }
+    #toolbar button {
+      background: #2a2a2a;
+      color: #ccc;
+      border: 1px solid #444;
+      border-radius: 6px;
+      padding: 4px 12px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    #toolbar button:hover { background: #3a3a3a; color: #fff; }
+    #toolbar span { color: #666; font-size: 12px; }
+
+    /* Add stream dialog */
+    #add-dialog {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+    #add-dialog.open { display: flex; }
+    #add-dialog .box {
+      background: #222;
+      border: 1px solid #444;
+      border-radius: 10px;
+      padding: 24px;
+      width: 460px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    #add-dialog h3 { color: #fff; font-size: 15px; }
+    #add-dialog input {
+      background: #111;
+      border: 1px solid #555;
+      border-radius: 6px;
+      color: #fff;
+      padding: 8px 12px;
+      font-size: 13px;
+      width: 100%;
+    }
+    #add-dialog label { color: #aaa; font-size: 12px; }
+    .dialog-btns { display: flex; gap: 8px; justify-content: flex-end; }
+    .dialog-btns button {
+      background: #333;
+      color: #ccc;
+      border: 1px solid #555;
+      border-radius: 6px;
+      padding: 6px 16px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .dialog-btns button.primary { background: #1a6faf; color: #fff; border-color: #2a8fd0; }
+  </style>
+</head>
+<body>
+
+<div id="toolbar">
+  <button id="btn-add-stream">+ Add Stream</button>
+  <button id="btn-layout-side">Side by Side</button>
+  <button id="btn-layout-stack">Stacked</button>
+  <button id="btn-fullscreen">Fullscreen</button>
+  <span id="toolbar-hint">Scroll to zoom · Drag to pan</span>
+</div>
+
+<div id="layout" class="single"></div>
+
+<!-- Add stream dialog -->
+<div id="add-dialog">
+  <div class="box">
+    <h3>Add Stream</h3>
+    <label>Stream name</label>
+    <input id="input-name" type="text" placeholder="e.g. Ashdod Beach" />
+    <label>HLS stream URL (.m3u8)</label>
+    <input id="input-url" type="text" placeholder="http://..." />
+    <div class="dialog-btns">
+      <button id="dialog-cancel">Cancel</button>
+      <button id="dialog-add" class="primary">Add</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+<script>
+  const STREAMS = [
+    { name: 'Yamit Beach', url: 'https://s122.ipcamlive.com/streams/7ah8baewucekfcnrj/stream.m3u8' },
+    { name: 'Hilton A - Lefts', url: 'https://vod.wavehub.co.il/live/_definst_/HiltonA_Lefts_HD.stream/playlist.m3u8' }
+  ];
+
+  const layout = document.getElementById('layout');
+
+  function createPanel(stream) {
+    const panel = document.createElement('div');
+    panel.className = 'stream-panel';
+
+    panel.innerHTML = `
+      <div class="video-wrapper">
+        <video autoplay muted playsinline></video>
+      </div>
+      <div class="panel-label">${stream.name} — Loading...</div>
+      <div class="panel-controls">
+        <button class="btn-out">−</button>
+        <span class="zoom-label">100%</span>
+        <button class="btn-in">+</button>
+        <button class="btn-reset">Reset</button>
+      </div>
+    `;
+
+    const video = panel.querySelector('video');
+    const wrapper = panel.querySelector('.video-wrapper');
+    const label = panel.querySelector('.panel-label');
+    const zoomLabel = panel.querySelector('.zoom-label');
+
+    // HLS
+    if (Hls.isSupported()) {
+      const hls = new Hls();
+      hls.loadSource(stream.url);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        video.play();
+        label.textContent = stream.name;
+        setTimeout(() => label.style.opacity = '0', 4000);
+      });
+      hls.on(Hls.Events.ERROR, (e, d) => {
+        if (d.fatal) label.textContent = stream.name + ' — error';
+      });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = stream.url;
+      video.addEventListener('loadedmetadata', () => video.play());
+    }
+
+    // Zoom/pan state
+    let scale = 1, tx = 0, ty = 0;
+
+    function apply() {
+      wrapper.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+      zoomLabel.textContent = Math.round(scale * 100) + '%';
+    }
+
+    function clamp() {
+      const maxX = (panel.clientWidth * (scale - 1)) / 2;
+      const maxY = (panel.clientHeight * (scale - 1)) / 2;
+      tx = Math.max(-maxX, Math.min(maxX, tx));
+      ty = Math.max(-maxY, Math.min(maxY, ty));
+    }
+
+    function zoom(delta) {
+      scale = Math.max(1, Math.min(8, scale + delta));
+      clamp(); apply();
+    }
+
+    panel.querySelector('.btn-in').addEventListener('click', e => { e.stopPropagation(); zoom(0.25); });
+    panel.querySelector('.btn-out').addEventListener('click', e => { e.stopPropagation(); zoom(-0.25); });
+    panel.querySelector('.btn-reset').addEventListener('click', e => {
+      e.stopPropagation();
+      scale = 1; tx = 0; ty = 0; apply();
+    });
+
+    // Scroll to zoom (only when hovering this panel)
+    panel.addEventListener('wheel', e => {
+      e.preventDefault();
+      zoom(e.deltaY > 0 ? -0.15 : 0.15);
+    }, { passive: false });
+
+    // Drag to pan
+    let dragging = false, dragStart = {};
+    panel.addEventListener('mousedown', e => {
+      if (scale <= 1) return;
+      dragging = true;
+      dragStart = { x: e.clientX - tx, y: e.clientY - ty };
+      panel.classList.add('grabbing');
+    });
+    window.addEventListener('mousemove', e => {
+      if (!dragging) return;
+      tx = e.clientX - dragStart.x;
+      ty = e.clientY - dragStart.y;
+      clamp(); apply();
+    });
+    window.addEventListener('mouseup', () => {
+      dragging = false;
+      panel.classList.remove('grabbing');
+    });
+
+    return panel;
+  }
+
+  function rebuildLayout() {
+    layout.innerHTML = '';
+    const count = STREAMS.length;
+    layout.className = count === 1 ? 'single' : layout.dataset.dir || 'side-by-side';
+    STREAMS.forEach(s => layout.appendChild(createPanel(s)));
+  }
+
+  // Toolbar buttons
+  document.getElementById('btn-layout-side').addEventListener('click', () => {
+    layout.dataset.dir = 'side-by-side';
+    if (STREAMS.length > 1) { layout.className = 'side-by-side'; }
+  });
+  document.getElementById('btn-layout-stack').addEventListener('click', () => {
+    layout.dataset.dir = 'stacked';
+    if (STREAMS.length > 1) { layout.className = 'stacked'; }
+  });
+  document.getElementById('btn-fullscreen').addEventListener('click', () => {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+    else document.exitFullscreen();
+  });
+
+  // Add stream dialog
+  const dialog = document.getElementById('add-dialog');
+  document.getElementById('btn-add-stream').addEventListener('click', () => dialog.classList.add('open'));
+  document.getElementById('dialog-cancel').addEventListener('click', () => dialog.classList.remove('open'));
+  document.getElementById('dialog-add').addEventListener('click', () => {
+    const name = document.getElementById('input-name').value.trim() || 'Stream ' + (STREAMS.length + 1);
+    const url = document.getElementById('input-url').value.trim();
+    if (!url) return;
+    STREAMS.push({ name, url });
+    dialog.classList.remove('open');
+    document.getElementById('input-name').value = '';
+    document.getElementById('input-url').value = '';
+    rebuildLayout();
+  });
+
+  rebuildLayout();
+</script>
+</body>
+</html>
