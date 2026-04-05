@@ -205,6 +205,7 @@
         <span class="zoom-label">100%</span>
         <button class="btn-in">+</button>
         <button class="btn-reset">Reset</button>
+        <button class="btn-fs">⛶</button>
       </div>
     `;
 
@@ -257,6 +258,11 @@
       e.stopPropagation();
       scale = 1; tx = 0; ty = 0; apply();
     });
+    panel.querySelector('.btn-fs').addEventListener('click', e => {
+      e.stopPropagation();
+      if (!document.fullscreenElement) panel.requestFullscreen();
+      else document.exitFullscreen();
+    });
 
     // Scroll to zoom (only when hovering this panel)
     panel.addEventListener('wheel', e => {
@@ -289,7 +295,7 @@
   function rebuildLayout() {
     layout.innerHTML = '';
     const count = STREAMS.length;
-    layout.className = count === 1 ? 'single' : layout.dataset.dir || 'side-by-side';
+    layout.className = count === 1 ? 'single' : layout.dataset.dir || 'stacked';
     STREAMS.forEach(s => layout.appendChild(createPanel(s)));
   }
 
