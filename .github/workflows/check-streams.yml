@@ -1,0 +1,90 @@
+name: Check Streams
+
+on:
+  schedule:
+    - cron: '0 6 * * *'  # Every day at 6am UTC (8am Israel time)
+  workflow_dispatch:      # Allow manual trigger
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Yamit Beach stream
+        id: yamit
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "https://s122.ipcamlive.com/streams/7ah8baewucekfcnrj/stream.m3u8")
+          echo "status=$STATUS" >> $GITHUB_OUTPUT
+          echo "Yamit stream HTTP status: $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "failed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check Hilton A stream
+        id: hilton
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "https://vod.wavehub.co.il/live/_definst_/HiltonA_Lefts_HD.stream/playlist.m3u8")
+          echo "status=$STATUS" >> $GITHUB_OUTPUT
+          echo "Hilton stream HTTP status: $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "failed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Open issue if any stream is down
+        if: steps.yamit.outputs.failed == 'true' || steps.hilton.outputs.failed == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const lines = [];
+            if ('${{ steps.yamit.outputs.failed }}' === 'true')
+              lines.push('- ❌ **Yamit Beach** — HTTP ${{ steps.yamit.outputs.status }}');
+            else
+              lines.push('- ✅ **Yamit Beach** — OK');
+
+            if ('${{ steps.hilton.outputs.failed }}' === 'true')
+              lines.push('- ❌ **Hilton A Lefts** — HTTP ${{ steps.hilton.outputs.status }}');
+            else
+              lines.push('- ✅ **Hilton A Lefts** — OK');
+
+            // Check if issue already open to avoid duplicates
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'stream-down'
+            });
+
+            if (issues.data.length === 0) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: '🚨 Stream(s) down — ' + new Date().toISOString().split('T')[0],
+                body: '## Stream health check failed\n\n' + lines.join('\n') + '\n\nCheck the [page](https://itamar-korem.github.io/beach-cams/) and update the stream URL if needed.',
+                labels: ['stream-down']
+              });
+            }
+
+      - name: Close resolved issues
+        if: steps.yamit.outputs.failed != 'true' && steps.hilton.outputs.failed != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'stream-down'
+            });
+            for (const issue of issues.data) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: 'closed'
+              });
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: '✅ All streams are back online. Auto-closing.'
+              });
+            }
