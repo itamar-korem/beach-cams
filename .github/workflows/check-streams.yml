@@ -1,4 +1,4 @@
-name: Check Streams
+name: Check & Heal Streams
 
 on:
   schedule:
@@ -6,65 +6,60 @@ on:
   workflow_dispatch:      # Allow manual trigger
 
 jobs:
-  check:
+  check-and-heal:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+
     steps:
-      - name: Check Yamit Beach stream
-        id: yamit
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Run self-healing script
+        id: heal
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "https://s122.ipcamlive.com/streams/7ah8baewucekfcnrj/stream.m3u8")
-          echo "status=$STATUS" >> $GITHUB_OUTPUT
-          echo "Yamit stream HTTP status: $STATUS"
-          if [ "$STATUS" != "200" ]; then
-            echo "failed=true" >> $GITHUB_OUTPUT
+          node fix-streams.js
+          if git diff --quiet index.html; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: Check Hilton A stream
-        id: hilton
+      - name: Commit and push updated stream URLs
+        if: steps.heal.outputs.changed == 'true'
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "https://vod.wavehub.co.il/live/_definst_/HiltonA_Lefts_HD.stream/playlist.m3u8")
-          echo "status=$STATUS" >> $GITHUB_OUTPUT
-          echo "Hilton stream HTTP status: $STATUS"
-          if [ "$STATUS" != "200" ]; then
-            echo "failed=true" >> $GITHUB_OUTPUT
-          fi
+          git config user.name "Stream Bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add index.html
+          git commit -m "🔧 Auto-fix broken stream URLs [$(date '+%Y-%m-%d')]"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Open issue if any stream is down
-        if: steps.yamit.outputs.failed == 'true' || steps.hilton.outputs.failed == 'true'
+      - name: Open issue if healing failed
+        if: failure()
         uses: actions/github-script@v7
         with:
           script: |
-            const lines = [];
-            if ('${{ steps.yamit.outputs.failed }}' === 'true')
-              lines.push('- ❌ **Yamit Beach** — HTTP ${{ steps.yamit.outputs.status }}');
-            else
-              lines.push('- ✅ **Yamit Beach** — OK');
-
-            if ('${{ steps.hilton.outputs.failed }}' === 'true')
-              lines.push('- ❌ **Hilton A Lefts** — HTTP ${{ steps.hilton.outputs.status }}');
-            else
-              lines.push('- ✅ **Hilton A Lefts** — OK');
-
-            // Check if issue already open to avoid duplicates
             const issues = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
               state: 'open',
               labels: 'stream-down'
             });
-
             if (issues.data.length === 0) {
               await github.rest.issues.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                title: '🚨 Stream(s) down — ' + new Date().toISOString().split('T')[0],
-                body: '## Stream health check failed\n\n' + lines.join('\n') + '\n\nCheck the [page](https://itamar-korem.github.io/beach-cams/) and update the stream URL if needed.',
+                title: '🚨 Stream broken & could not auto-fix — ' + new Date().toISOString().split('T')[0],
+                body: 'The daily stream check ran but could not automatically find a replacement URL.\n\nManual intervention needed — check the [Actions log](' + context.serverUrl + '/' + context.repo.owner + '/' + context.repo.repo + '/actions) for details.',
                 labels: ['stream-down']
               });
             }
 
       - name: Close resolved issues
-        if: steps.yamit.outputs.failed != 'true' && steps.hilton.outputs.failed != 'true'
+        if: success() && steps.heal.outputs.changed != 'true'
         uses: actions/github-script@v7
         with:
           script: |
