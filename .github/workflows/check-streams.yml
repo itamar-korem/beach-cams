@@ -3,7 +3,7 @@ name: Check & Heal Streams
 on:
   schedule:
     - cron: '0 1 * * *'  # Every day at 1am UTC (4am Israel time)
-  workflow_dispatch:      # Allow manual trigger
+  workflow_dispatch:
 
 jobs:
   check-and-heal:
@@ -16,26 +16,31 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Run self-healing script
         id: heal
         run: |
           node fix-streams.js
           if git diff --quiet index.html; then
-            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "changed=false" >> "$GITHUB_OUTPUT"
           else
-            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Commit and push updated stream URLs
         if: steps.heal.outputs.changed == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "Stream Bot"
           git config user.email "bot@users.noreply.github.com"
           git add index.html
-          git commit -m "🔧 Auto-fix broken stream URLs [$(date '+%Y-%m-%d')]"
+          git commit -m "Auto-fix broken stream URLs [$(date '+%Y-%m-%d')]"
           git push
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Open issue if healing failed
         if: failure()
@@ -52,8 +57,8 @@ jobs:
               await github.rest.issues.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                title: '🚨 Stream broken & could not auto-fix — ' + new Date().toISOString().split('T')[0],
-                body: 'The daily stream check ran but could not automatically find a replacement URL.\n\nManual intervention needed — check the [Actions log](' + context.serverUrl + '/' + context.repo.owner + '/' + context.repo.repo + '/actions) for details.',
+                title: 'Stream broken and could not auto-fix - ' + new Date().toISOString().split('T')[0],
+                body: 'The daily stream check ran but could not automatically find a replacement URL.\n\nManual intervention needed - check the [Actions log](' + context.serverUrl + '/' + context.repo.owner + '/' + context.repo.repo + '/actions) for details.',
                 labels: ['stream-down']
               });
             }
@@ -80,6 +85,6 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: issue.number,
-                body: '✅ All streams are back online. Auto-closing.'
+                body: 'All streams are back online. Auto-closing.'
               });
             }

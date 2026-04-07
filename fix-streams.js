@@ -72,11 +72,10 @@ async function findHiltonStream() {
   if (nextData) {
     const parsed = JSON.parse(nextData);
     const json = JSON.stringify(parsed);
-    const match = json.match(/https:\\/\\/vod\\.wavehub\\.co\\.il\\/live\\/[^"\\]+\.m3u8/)?.[0];
+    const match = json.match(/https:\/\/vod\.wavehub\.co\.il\/live\/[^"'\\]+(?:\.m3u8|\.stream\/playlist\.m3u8)/)?.[0];
     if (match) {
-      const url = match.replace(/\\\//g, '/');
-      console.log('  Found in __NEXT_DATA__:', url);
-      return url;
+      console.log('  Found in __NEXT_DATA__:', match);
+      return match;
     }
 
     // Try to find stream name
