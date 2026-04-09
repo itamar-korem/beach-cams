@@ -18,7 +18,7 @@ function fetch(url) {
 }
 
 async function findYamitStream() {
-  console.log('🔍 Scraping Yamit stream...');
+  console.log('Scraping Yamit stream...');
 
   // Step 1: Get the alias from beachcam.co.il
   const page = await fetch('https://beachcam.co.il/yamit.html');
@@ -56,49 +56,53 @@ async function findYamitStream() {
 }
 
 async function findHiltonStream() {
-  console.log('🔍 Scraping Hilton stream...');
+  console.log('Scraping Hilton stream...');
 
   const page = await fetch('https://www.wavehub.co.il/stream/hilton-a-rights');
+  const candidates = new Set();
 
-  // Try to find stream URL directly in page source
-  const direct = page.match(/https:\/\/vod\.wavehub\.co\.il\/live\/[^\s"'\\]+\.m3u8/)?.[0];
-  if (direct) {
-    console.log('  Found directly in page:', direct);
-    return direct;
+  // Collect any stream URLs embedded directly in the page source.
+  for (const match of page.matchAll(/https:\/\/vod\.wavehub\.co\.il\/[^\s"'\\]+\.m3u8/g)) {
+    candidates.add(match[0]);
   }
 
-  // Look in __NEXT_DATA__ for stream config
+  // Look in __NEXT_DATA__ for stream config and collect every declared variant.
   const nextData = page.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/)?.[1];
   if (nextData) {
     const parsed = JSON.parse(nextData);
     const json = JSON.stringify(parsed);
-    const match = json.match(/https:\/\/vod\.wavehub\.co\.il\/live\/[^"'\\]+(?:\.m3u8|\.stream\/playlist\.m3u8)/)?.[0];
-    if (match) {
-      console.log('  Found in __NEXT_DATA__:', match);
-      return match;
+
+    for (const match of json.matchAll(/https:\/\/vod\.wavehub\.co\.il\/[^"'\\]+(?:\.m3u8|\.stream\/playlist\.m3u8)/g)) {
+      candidates.add(match[0]);
     }
 
-    // Try to find stream name
     const streamName = json.match(/HiltonA[A-Za-z0-9_]+(?:HD|SD)/)?.[0];
     if (streamName) {
-      const url = `https://vod.wavehub.co.il/live/_definst_/${streamName}.stream/playlist.m3u8`;
-      console.log('  Constructed from stream name:', url);
-      return url;
+      candidates.add(`https://vod.wavehub.co.il/live/_definst_/${streamName}.stream/playlist.m3u8`);
     }
   }
 
-  // Fallback: try HD then SD
-  console.log('  Trying known URL patterns...');
-  for (const quality of ['HD', 'SD']) {
-    const url = `https://vod.wavehub.co.il/live/_definst_/HiltonA_Lefts_${quality}.stream/playlist.m3u8`;
+  // Fallback: known URL patterns seen on WaveHub.
+  for (const url of [
+    'https://vod.wavehub.co.il/live/_definst_/HiltonA_Lefts_HD.stream/playlist.m3u8',
+    'https://vod.wavehub.co.il/live/_definst_/HiltonA_Lefts_SD.stream/playlist.m3u8',
+    'https://vod.wavehub.co.il/wavehub-live-4k/_definst_/HiltonA_Lefts.stream/playlist.m3u8'
+  ]) {
+    candidates.add(url);
+  }
+
+  console.log(`  Testing ${candidates.size} candidate URLs...`);
+  for (const url of candidates) {
     const ok = await checkUrl(url);
     if (ok) {
-      console.log(`  Working ${quality} stream found:`, url);
+      console.log('  Working Hilton stream found:', url);
       return url;
     }
+
+    console.log('  Candidate failed:', url);
   }
 
-  throw new Error('Could not find Hilton stream URL');
+  throw new Error('WaveHub page only exposes dead Hilton playlist URLs');
 }
 
 function checkUrl(url) {
@@ -121,7 +125,7 @@ async function main() {
   // Check and fix Yamit
   const yamitOk = await checkUrl(html.match(/name: 'Yamit Beach'.*?url: '([^']+)'/s)?.[1] || '');
   if (!yamitOk) {
-    console.log('Yamit stream is down — finding new URL...');
+    console.log('Yamit stream is down - finding new URL...');
     try {
       const newUrl = await findYamitStream();
       html = html.replace(
@@ -129,19 +133,19 @@ async function main() {
         `$1${newUrl}$2`
       );
       changed = true;
-      console.log('✅ Yamit stream updated');
+      console.log('Yamit stream updated');
     } catch (e) {
-      console.error('❌ Failed to find Yamit stream:', e.message);
+      console.error('Failed to find Yamit stream:', e.message);
       process.exitCode = 1;
     }
   } else {
-    console.log('✅ Yamit stream is healthy');
+    console.log('Yamit stream is healthy');
   }
 
   // Check and fix Hilton
   const hiltonOk = await checkUrl(html.match(/name: 'Hilton A - Lefts'.*?url: '([^']+)'/s)?.[1] || '');
   if (!hiltonOk) {
-    console.log('Hilton stream is down — finding new URL...');
+    console.log('Hilton stream is down - finding new URL...');
     try {
       const newUrl = await findHiltonStream();
       html = html.replace(
@@ -149,18 +153,18 @@ async function main() {
         `$1${newUrl}$2`
       );
       changed = true;
-      console.log('✅ Hilton stream updated');
+      console.log('Hilton stream updated');
     } catch (e) {
-      console.error('❌ Failed to find Hilton stream:', e.message);
+      console.error('Failed to find Hilton stream:', e.message);
       process.exitCode = 1;
     }
   } else {
-    console.log('✅ Hilton stream is healthy');
+    console.log('Hilton stream is healthy');
   }
 
   if (changed) {
     fs.writeFileSync(indexPath, html);
-    console.log('\n📝 index.html updated with new stream URLs');
+    console.log('\nindex.html updated with new stream URLs');
   } else {
     console.log('\nNo changes needed');
   }

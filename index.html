@@ -14,7 +14,6 @@
       padding: 20px;
     }
 
-    /* Stack vertically when only one stream, side by side for two */
     #layout.single .stream-panel { width: 100%; height: 100%; }
     #layout.side-by-side { flex-direction: row; }
     #layout.stacked { flex-direction: column; }
@@ -31,21 +30,25 @@
 
     .video-wrapper {
       position: absolute;
-      top: 0; left: 0;
-      width: 100%; height: 100%;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
       transform-origin: center center;
       transition: transform 0.08s ease;
     }
 
     video {
-      width: 100%; height: 100%;
+      width: 100%;
+      height: 100%;
       object-fit: contain;
       display: block;
     }
 
     .panel-label {
       position: absolute;
-      top: 10px; left: 12px;
+      top: 10px;
+      left: 12px;
       color: rgba(255,255,255,0.7);
       font-size: 13px;
       pointer-events: none;
@@ -78,6 +81,7 @@
       cursor: pointer;
     }
     .panel-controls button:hover { background: rgba(255,255,255,0.3); }
+
     .zoom-label {
       color: #fff;
       font-size: 12px;
@@ -87,7 +91,6 @@
       justify-content: center;
     }
 
-    /* Top toolbar */
     #toolbar {
       display: flex;
       align-items: center;
@@ -96,6 +99,7 @@
       background: #1a1a1a;
       border-bottom: 1px solid #333;
     }
+
     #toolbar button {
       background: #2a2a2a;
       color: #ccc;
@@ -108,7 +112,6 @@
     #toolbar button:hover { background: #3a3a3a; color: #fff; }
     #toolbar span { color: #666; font-size: 12px; }
 
-    /* Add stream dialog */
     #add-dialog {
       display: none;
       position: fixed;
@@ -119,6 +122,7 @@
       justify-content: center;
     }
     #add-dialog.open { display: flex; }
+
     #add-dialog .box {
       background: #222;
       border: 1px solid #444;
@@ -129,7 +133,9 @@
       flex-direction: column;
       gap: 12px;
     }
+
     #add-dialog h3 { color: #fff; font-size: 15px; }
+
     #add-dialog input {
       background: #111;
       border: 1px solid #555;
@@ -139,7 +145,9 @@
       font-size: 13px;
       width: 100%;
     }
+
     #add-dialog label { color: #aaa; font-size: 12px; }
+
     .dialog-btns { display: flex; gap: 8px; justify-content: flex-end; }
     .dialog-btns button {
       background: #333;
@@ -165,7 +173,6 @@
 
 <div id="layout" class="single"></div>
 
-<!-- Add stream dialog -->
 <div id="add-dialog">
   <div class="box">
     <h3>Add Stream</h3>
@@ -180,14 +187,27 @@
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.20/dist/hls.min.js"></script>
 <script>
   const STREAMS = [
-    { name: 'Yamit Beach', url: 'https://s122.ipcamlive.com/streams/7agmlrostdiykwuqn/stream.m3u8' },
+    { name: 'Yamit Beach', url: 'https://s122.ipcamlive.com/streams/7aq7po0hsflnt5nrw/stream.m3u8' },
     { name: 'Hilton A - Lefts', url: 'https://vod.wavehub.co.il/live/_definst_/HiltonA_Lefts_HD.stream/playlist.m3u8' }
   ];
 
   const layout = document.getElementById('layout');
+  const panelCleanups = [];
+
+  function setPanelLabel(label, name, status = '') {
+    label.style.opacity = '1';
+    label.textContent = status ? `${name} - ${status}` : name;
+  }
+
+  function fadePanelLabel(label) {
+    clearTimeout(label._fadeTimer);
+    label._fadeTimer = setTimeout(() => {
+      label.style.opacity = '0';
+    }, 4000);
+  }
 
   function createPanel(stream) {
     const panel = document.createElement('div');
@@ -197,13 +217,13 @@
       <div class="video-wrapper">
         <video autoplay muted playsinline></video>
       </div>
-      <div class="panel-label">${stream.name} — Loading...</div>
+      <div class="panel-label">${stream.name} - Loading...</div>
       <div class="panel-controls">
-        <button class="btn-out">−</button>
+        <button class="btn-out">-</button>
         <span class="zoom-label">100%</span>
         <button class="btn-in">+</button>
         <button class="btn-reset">Reset</button>
-        <button class="btn-fs">⛶</button>
+        <button class="btn-fs">FS</button>
       </div>
     `;
 
@@ -211,27 +231,86 @@
     const wrapper = panel.querySelector('.video-wrapper');
     const label = panel.querySelector('.panel-label');
     const zoomLabel = panel.querySelector('.zoom-label');
+    let cleanup = () => {};
 
-    // HLS
-    if (Hls.isSupported()) {
-      const hls = new Hls();
-      hls.loadSource(stream.url);
-      hls.attachMedia(video);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        video.play();
-        label.textContent = stream.name;
-        setTimeout(() => label.style.opacity = '0', 4000);
+    function playVideo() {
+      const playPromise = video.play();
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch(() => {
+          setPanelLabel(label, stream.name, 'tap to play');
+        });
+      }
+    }
+
+    if (window.Hls && Hls.isSupported()) {
+      const hls = new Hls({
+        lowLatencyMode: false,
+        backBufferLength: 90
       });
-      hls.on(Hls.Events.ERROR, (e, d) => {
-        if (d.fatal) label.textContent = stream.name + ' — error';
+      let networkRetries = 0;
+      let mediaRetries = 0;
+
+      cleanup = () => hls.destroy();
+
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+        setPanelLabel(label, stream.name, 'connecting...');
+        hls.loadSource(stream.url);
+      });
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        playVideo();
+      });
+      hls.on(Hls.Events.LEVEL_LOADED, () => {
+        setPanelLabel(label, stream.name);
+        fadePanelLabel(label);
+      });
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        const reason = data.details || data.type || 'error';
+        console.warn('HLS error', stream.name, reason, data);
+        if (!data.fatal) return;
+
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR && networkRetries < 3) {
+          networkRetries += 1;
+          setPanelLabel(label, stream.name, `retrying stream (${networkRetries}/3)`);
+          hls.startLoad();
+          return;
+        }
+
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaRetries < 2) {
+          mediaRetries += 1;
+          setPanelLabel(label, stream.name, `recovering video (${mediaRetries}/2)`);
+          hls.recoverMediaError();
+          return;
+        }
+
+        setPanelLabel(label, stream.name, reason);
       });
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = stream.url;
-      video.addEventListener('loadedmetadata', () => video.play());
+      video.addEventListener('loadedmetadata', playVideo);
+      cleanup = () => {
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+      };
+    } else {
+      setPanelLabel(label, stream.name, 'HLS not supported');
     }
 
-    // Zoom/pan state
-    let scale = 1, tx = 0, ty = 0;
+    video.addEventListener('playing', () => {
+      setPanelLabel(label, stream.name);
+      fadePanelLabel(label);
+    });
+    video.addEventListener('waiting', () => setPanelLabel(label, stream.name, 'buffering...'));
+    video.addEventListener('stalled', () => setPanelLabel(label, stream.name, 'stalled'));
+    video.addEventListener('error', () => {
+      const reason = video.error?.message || `media error ${video.error?.code || ''}`.trim();
+      setPanelLabel(label, stream.name, reason);
+    });
+
+    let scale = 1;
+    let tx = 0;
+    let ty = 0;
 
     function apply() {
       wrapper.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
@@ -247,14 +326,18 @@
 
     function zoom(delta) {
       scale = Math.max(1, Math.min(8, scale + delta));
-      clamp(); apply();
+      clamp();
+      apply();
     }
 
     panel.querySelector('.btn-in').addEventListener('click', e => { e.stopPropagation(); zoom(0.25); });
     panel.querySelector('.btn-out').addEventListener('click', e => { e.stopPropagation(); zoom(-0.25); });
     panel.querySelector('.btn-reset').addEventListener('click', e => {
       e.stopPropagation();
-      scale = 1; tx = 0; ty = 0; apply();
+      scale = 1;
+      tx = 0;
+      ty = 0;
+      apply();
     });
     panel.querySelector('.btn-fs').addEventListener('click', e => {
       e.stopPropagation();
@@ -262,14 +345,13 @@
       else document.exitFullscreen();
     });
 
-    // Scroll to zoom (only when hovering this panel)
     panel.addEventListener('wheel', e => {
       e.preventDefault();
       zoom(e.deltaY > 0 ? -0.15 : 0.15);
     }, { passive: false });
 
-    // Drag to pan
-    let dragging = false, dragStart = {};
+    let dragging = false;
+    let dragStart = {};
     panel.addEventListener('mousedown', e => {
       if (scale <= 1) return;
       dragging = true;
@@ -280,38 +362,45 @@
       if (!dragging) return;
       tx = e.clientX - dragStart.x;
       ty = e.clientY - dragStart.y;
-      clamp(); apply();
+      clamp();
+      apply();
     });
     window.addEventListener('mouseup', () => {
       dragging = false;
       panel.classList.remove('grabbing');
     });
 
-    return panel;
+    return { panel, cleanup };
   }
 
   function rebuildLayout() {
+    while (panelCleanups.length) {
+      panelCleanups.pop()();
+    }
+
     layout.innerHTML = '';
     const count = STREAMS.length;
     layout.className = count === 1 ? 'single' : layout.dataset.dir || 'stacked';
-    STREAMS.forEach(s => layout.appendChild(createPanel(s)));
+    STREAMS.forEach(stream => {
+      const { panel, cleanup } = createPanel(stream);
+      panelCleanups.push(cleanup);
+      layout.appendChild(panel);
+    });
   }
 
-  // Toolbar buttons
   document.getElementById('btn-layout-side').addEventListener('click', () => {
     layout.dataset.dir = 'side-by-side';
-    if (STREAMS.length > 1) { layout.className = 'side-by-side'; }
+    if (STREAMS.length > 1) layout.className = 'side-by-side';
   });
   document.getElementById('btn-layout-stack').addEventListener('click', () => {
     layout.dataset.dir = 'stacked';
-    if (STREAMS.length > 1) { layout.className = 'stacked'; }
+    if (STREAMS.length > 1) layout.className = 'stacked';
   });
   document.getElementById('btn-fullscreen').addEventListener('click', () => {
     if (!document.fullscreenElement) document.documentElement.requestFullscreen();
     else document.exitFullscreen();
   });
 
-  // Add stream dialog
   const dialog = document.getElementById('add-dialog');
   document.getElementById('btn-add-stream').addEventListener('click', () => dialog.classList.add('open'));
   document.getElementById('dialog-cancel').addEventListener('click', () => dialog.classList.remove('open'));
