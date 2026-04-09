@@ -24,12 +24,21 @@ jobs:
       - name: Run self-healing script
         id: heal
         run: |
+          set +e
           node fix-streams.js
+          heal_exit_code=$?
+          echo "heal_exit_code=$heal_exit_code" >> "$GITHUB_OUTPUT"
+          if [ "$heal_exit_code" -eq 0 ]; then
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+          fi
           if git diff --quiet index.html; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
+          exit 0
 
       - name: Commit and push updated stream URLs
         if: steps.heal.outputs.changed == 'true'
@@ -43,7 +52,7 @@ jobs:
           git push
 
       - name: Open issue if healing failed
-        if: failure()
+        if: steps.heal.outputs.failed == 'true'
         uses: actions/github-script@v7
         with:
           script: |
@@ -58,13 +67,13 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 title: 'Stream broken and could not auto-fix - ' + new Date().toISOString().split('T')[0],
-                body: 'The daily stream check ran but could not automatically find a replacement URL.\n\nManual intervention needed - check the [Actions log](' + context.serverUrl + '/' + context.repo.owner + '/' + context.repo.repo + '/actions) for details.',
+                body: 'The hourly stream check ran but could not automatically find a replacement URL.\n\nManual intervention needed - check the [Actions log](' + context.serverUrl + '/' + context.repo.owner + '/' + context.repo.repo + '/actions) for details.',
                 labels: ['stream-down']
               });
             }
 
       - name: Close resolved issues
-        if: success() && steps.heal.outputs.changed != 'true'
+        if: steps.heal.outputs.failed != 'true' && steps.heal.outputs.changed != 'true'
         uses: actions/github-script@v7
         with:
           script: |
