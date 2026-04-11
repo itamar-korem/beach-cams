@@ -58,7 +58,7 @@ async function findYamitStream() {
 async function findHiltonStream() {
   console.log('Scraping Hilton stream...');
 
-  const page = await fetch('https://www.wavehub.co.il/stream/hilton-a-rights');
+  const page = await fetch('https://www.wavehub.co.il/beaches/hilton-a');
   const candidates = new Set();
 
   // Collect any stream URLs embedded directly in the page source.
@@ -82,11 +82,11 @@ async function findHiltonStream() {
     }
   }
 
-  // Fallback: known URL patterns seen on WaveHub.
+  // Fallback: current known Hilton A stream variants.
   for (const url of [
-    'https://vod.wavehub.co.il/live/_definst_/HiltonA_Lefts_HD.stream/playlist.m3u8',
-    'https://vod.wavehub.co.il/live/_definst_/HiltonA_Lefts_SD.stream/playlist.m3u8',
-    'https://vod.wavehub.co.il/wavehub-live-4k/_definst_/HiltonA_Lefts.stream/playlist.m3u8'
+    'https://vod.wavehub.co.il/live/_definst_/HiltonA_HD.stream/playlist.m3u8',
+    'https://vod.wavehub.co.il/live/_definst_/HiltonA_SD.stream/playlist.m3u8',
+    'https://vod.wavehub.co.il/wavehub-live-4k/_definst_/HiltonA.stream/playlist.m3u8'
   ]) {
     candidates.add(url);
   }
@@ -107,6 +107,11 @@ async function findHiltonStream() {
 
 function checkUrl(url) {
   return new Promise(resolve => {
+    if (!url) {
+      resolve(false);
+      return;
+    }
+
     const client = url.startsWith('https') ? https : http;
     const req = client.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, res => {
       resolve(res.statusCode === 200);
@@ -143,13 +148,13 @@ async function main() {
   }
 
   // Check and fix Hilton
-  const hiltonOk = await checkUrl(html.match(/name: 'Hilton A - Lefts'.*?url: '([^']+)'/s)?.[1] || '');
+  const hiltonOk = await checkUrl(html.match(/name: 'Hilton A'.*?url: '([^']+)'/s)?.[1] || '');
   if (!hiltonOk) {
     console.log('Hilton stream is down - finding new URL...');
     try {
       const newUrl = await findHiltonStream();
       html = html.replace(
-        /(\{ name: 'Hilton A - Lefts', url: ')[^']+(')/,
+        /(\{ name: 'Hilton A', url: ')[^']+(')/,
         `$1${newUrl}$2`
       );
       changed = true;
